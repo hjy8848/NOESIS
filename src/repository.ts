@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import * as Crypto from 'expo-crypto';
-import { Thought, ThoughtStatus, ThoughtType } from './types';
+import { Card, CardLink, Chapter, ChapterCardEntry, SystemDocument, Thought, ThoughtStatus, ThoughtSystem, ThoughtType } from './types';
 
 let database: Promise<SQLite.SQLiteDatabase> | undefined;
 
@@ -17,7 +17,7 @@ async function initialize() {
   const db = await SQLite.openDatabaseAsync('noesis.db');
   await db.execAsync('PRAGMA foreign_keys = ON;');
   const version = (await db.getFirstAsync<{user_version: number}>('PRAGMA user_version'))?.user_version ?? 0;
-  if (version > 4) throw new Error('数据库由更新版本的 NOESIS 创建，无法打开');
+  if (version > 5) throw new Error('数据库由更新版本的 NOESIS 创建，无法打开');
   if (version < 1) await db.withTransactionAsync(async () => { await db.execAsync(`
     CREATE TABLE IF NOT EXISTS thoughts (
       id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
@@ -58,6 +58,36 @@ async function initialize() {
     ALTER TABLE relations ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'pending';
     UPDATE relations SET updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now');
     PRAGMA user_version = 4;`); });
+  if (version < 5) await db.withTransactionAsync(async () => { await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS systems (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+      createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS chapters (
+      id TEXT PRIMARY KEY, systemId TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+      title TEXT NOT NULL, position INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS chapters_system_position ON chapters(systemId, position);
+    CREATE TABLE IF NOT EXISTS chapter_cards (
+      chapterId TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+      cardId TEXT NOT NULL REFERENCES thoughts(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL, PRIMARY KEY(chapterId, cardId)
+    );
+    CREATE INDEX IF NOT EXISTS chapter_cards_order ON chapter_cards(chapterId, position);
+    CREATE TABLE IF NOT EXISTS card_links (
+      id TEXT PRIMARY KEY,
+      sourceCardId TEXT NOT NULL REFERENCES thoughts(id) ON DELETE CASCADE,
+      targetCardId TEXT NOT NULL REFERENCES thoughts(id) ON DELETE CASCADE,
+      CHECK(sourceCardId < targetCardId), UNIQUE(sourceCardId, targetCardId)
+    );
+    UPDATE thoughts SET content=summary WHERE content='' AND summary<>'';
+    INSERT OR IGNORE INTO card_links (id, sourceCardId, targetCardId)
+      SELECT id,
+        CASE WHEN sourceThoughtId < targetThoughtId THEN sourceThoughtId ELSE targetThoughtId END,
+        CASE WHEN sourceThoughtId < targetThoughtId THEN targetThoughtId ELSE sourceThoughtId END
+      FROM relations
+      WHERE deletedAt IS NULL AND sourceThoughtId <> targetThoughtId;
+    PRAGMA user_version = 5;`); });
   return db;
 }
 
@@ -105,7 +135,7 @@ async function importCardsImpl(items: ImportCard[]) {
 }
 
 async function initializeDemoImpl() {
-  const entries: Array<[string,ThoughtType,string]> = [
+  const entries: [string,ThoughtType,string][] = [
     ['深情叙事的自我中心性','proposition','深情叙事有时可能把自己的付出置于对方感受之前。'],
     ['道德优越感','concept','从道德判断中获得高于他人的自我评价。'],['审美与认知优越感','concept','以品味或知识区分自己与他人的心理倾向。'],
     ['自我凝视','concept','把自己的行为、感受和形象作为持续观察的对象。'],['自我客体化','concept','从外部观察者的视角看待自己。'],
@@ -159,7 +189,190 @@ async function saveThoughtImpl(input: { id?: string; title: string; summary: str
 
 async function deleteThoughtImpl(id: string) {
   const now = new Date().toISOString();
-  await (await openDatabase()).runAsync("UPDATE thoughts SET deletedAt=?, updatedAt=?, syncStatus='pending' WHERE id=?", now, now, id);
+  const db = await openDatabase();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM chapter_cards WHERE cardId=?', id);
+    await db.runAsync('DELETE FROM card_links WHERE sourceCardId=? OR targetCardId=?', id, id);
+    await db.runAsync("UPDATE thoughts SET deletedAt=?, updatedAt=?, syncStatus='pending' WHERE id=?", now, now, id);
+  });
+}
+
+async function listCardsImpl(): Promise<Card[]> {
+  return (await openDatabase()).getAllAsync<Card>(
+    'SELECT id,title,content,createdAt,updatedAt,deletedAt FROM thoughts WHERE deletedAt IS NULL ORDER BY updatedAt DESC'
+  );
+}
+
+async function saveCardImpl(input: { id?: string; title: string; content: string }): Promise<string> {
+  const title = input.title.trim();
+  if (!title) throw new Error('请填写卡片标题');
+  if (typeof input.content !== 'string') throw new Error('卡片正文无效');
+  const db = await openDatabase();
+  const id = input.id || Crypto.randomUUID();
+  const now = new Date().toISOString();
+  await db.withTransactionAsync(async () => {
+    const previous = await db.getFirstAsync<Thought>('SELECT * FROM thoughts WHERE id=?', id);
+    if (previous?.deletedAt) throw new Error('这张卡片已删除，无法继续编辑');
+    if (previous) {
+      await db.runAsync("UPDATE thoughts SET title=?,content=?,updatedAt=?,syncStatus='pending' WHERE id=?", title, input.content, now, id);
+    } else {
+      // Keep legacy NOT NULL columns populated while the UI uses the smaller Card model.
+      await db.runAsync(
+        'INSERT INTO thoughts (id,title,summary,content,type,status,createdAt,updatedAt,deletedAt) VALUES (?,?,\'\',?,\'proposition\',\'exploring\',?,?,NULL)',
+        id, title, input.content, now, now
+      );
+    }
+  });
+  return id;
+}
+
+async function listCardLinksImpl(): Promise<CardLink[]> {
+  return (await openDatabase()).getAllAsync<CardLink>('SELECT * FROM card_links ORDER BY sourceCardId,targetCardId');
+}
+
+async function addCardLinkImpl(sourceCardId: string, targetCardId: string): Promise<string> {
+  if (sourceCardId === targetCardId) throw new Error('不能关联同一张卡片');
+  const [source, target] = [sourceCardId, targetCardId].sort();
+  const db = await openDatabase();
+  await db.withTransactionAsync(async () => {
+    const active = await db.getFirstAsync<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM thoughts WHERE id IN (?,?) AND deletedAt IS NULL', source, target
+    );
+    if (active?.count !== 2) throw new Error('只能关联两张未删除的卡片');
+    await db.runAsync('INSERT OR IGNORE INTO card_links (id,sourceCardId,targetCardId) VALUES (?,?,?)', Crypto.randomUUID(), source, target);
+  });
+  const link = await db.getFirstAsync<CardLink>('SELECT * FROM card_links WHERE sourceCardId=? AND targetCardId=?', source, target);
+  if (!link) throw new Error('创建关联失败');
+  return link.id;
+}
+
+async function deleteCardLinkImpl(id: string) {
+  await (await openDatabase()).runAsync('DELETE FROM card_links WHERE id=?', id);
+}
+
+async function listSystemsImpl(): Promise<ThoughtSystem[]> {
+  return (await openDatabase()).getAllAsync<ThoughtSystem>('SELECT * FROM systems ORDER BY updatedAt DESC,createdAt DESC');
+}
+
+async function createSystemImpl(title: string, description = ''): Promise<string> {
+  const cleanTitle = title.trim();
+  if (!cleanTitle) throw new Error('请填写体系名称');
+  const id = Crypto.randomUUID();
+  const now = new Date().toISOString();
+  await (await openDatabase()).runAsync('INSERT INTO systems (id,title,description,createdAt,updatedAt) VALUES (?,?,?,?,?)', id, cleanTitle, description, now, now);
+  return id;
+}
+
+async function updateSystemImpl(id: string, title: string, description: string) {
+  const cleanTitle = title.trim();
+  if (!cleanTitle) throw new Error('请填写体系名称');
+  await (await openDatabase()).runAsync('UPDATE systems SET title=?,description=?,updatedAt=? WHERE id=?', cleanTitle, description, new Date().toISOString(), id);
+}
+
+async function deleteSystemImpl(id: string) {
+  await (await openDatabase()).runAsync('DELETE FROM systems WHERE id=?', id);
+}
+
+async function listChaptersImpl(systemId?: string): Promise<Chapter[]> {
+  const db = await openDatabase();
+  const select = `SELECT c.*,(SELECT COUNT(*) FROM chapter_cards cc JOIN thoughts t ON t.id=cc.cardId WHERE cc.chapterId=c.id AND t.deletedAt IS NULL) AS cardCount FROM chapters c`;
+  if (systemId) return db.getAllAsync<Chapter>(`${select} WHERE c.systemId=? ORDER BY c.position,c.id`, systemId);
+  return db.getAllAsync<Chapter>(`${select} ORDER BY c.systemId,c.position,c.id`);
+}
+
+async function createChapterImpl(systemId: string, title: string): Promise<string> {
+  const cleanTitle = title.trim();
+  if (!cleanTitle) throw new Error('请填写章节名称');
+  const db = await openDatabase();
+  const id = Crypto.randomUUID();
+  await db.withTransactionAsync(async () => {
+    if (!await db.getFirstAsync('SELECT id FROM systems WHERE id=?', systemId)) throw new Error('请先选择一个思想体系');
+    const position = await db.getFirstAsync<{ nextPosition: number }>('SELECT COALESCE(MAX(position),-1)+1 AS nextPosition FROM chapters WHERE systemId=?', systemId);
+    await db.runAsync('INSERT INTO chapters (id,systemId,title,position) VALUES (?,?,?,?)', id, systemId, cleanTitle, position?.nextPosition ?? 0);
+  });
+  return id;
+}
+
+async function updateChapterImpl(id: string, title: string) {
+  const cleanTitle = title.trim();
+  if (!cleanTitle) throw new Error('请填写章节名称');
+  await (await openDatabase()).runAsync('UPDATE chapters SET title=? WHERE id=?', cleanTitle, id);
+}
+
+async function deleteChapterImpl(id: string) {
+  await (await openDatabase()).runAsync('DELETE FROM chapters WHERE id=?', id);
+}
+
+async function reorderChaptersImpl(systemId: string, orderedIds: string[]) {
+  const db = await openDatabase();
+  await db.withTransactionAsync(async () => {
+    const current = await db.getAllAsync<{ id: string }>('SELECT id FROM chapters WHERE systemId=? ORDER BY position,id', systemId);
+    const currentIds = current.map(row => row.id);
+    if (new Set(orderedIds).size !== orderedIds.length || currentIds.length !== orderedIds.length || currentIds.some(id => !orderedIds.includes(id))) {
+      throw new Error('章节顺序与当前体系不匹配');
+    }
+    for (const [position, id] of orderedIds.entries()) await db.runAsync('UPDATE chapters SET position=? WHERE id=? AND systemId=?', position, id, systemId);
+  });
+}
+
+async function listChapterCardsImpl(chapterId: string): Promise<ChapterCardEntry[]> {
+  return (await openDatabase()).getAllAsync<ChapterCardEntry>(`
+    SELECT t.id,t.title,t.content,t.createdAt,t.updatedAt,t.deletedAt,cc.chapterId,cc.position
+    FROM chapter_cards cc JOIN thoughts t ON t.id=cc.cardId
+    WHERE cc.chapterId=? AND t.deletedAt IS NULL ORDER BY cc.position,t.id`, chapterId);
+}
+
+async function addCardsToChapterImpl(chapterId: string, cardIds: string[]) {
+  const ids = [...new Set(cardIds)];
+  const db = await openDatabase();
+  await db.withTransactionAsync(async () => {
+    if (!await db.getFirstAsync('SELECT id FROM chapters WHERE id=?', chapterId)) throw new Error('章节不存在');
+    let row = await db.getFirstAsync<{ nextPosition: number }>('SELECT COALESCE(MAX(position),-1)+1 AS nextPosition FROM chapter_cards WHERE chapterId=?', chapterId);
+    let position = row?.nextPosition ?? 0;
+    for (const cardId of ids) {
+      if (!await db.getFirstAsync('SELECT id FROM thoughts WHERE id=? AND deletedAt IS NULL', cardId)) throw new Error('只能把未删除的卡片添加到章节');
+      const exists = await db.getFirstAsync('SELECT cardId FROM chapter_cards WHERE chapterId=? AND cardId=?', chapterId, cardId);
+      if (!exists) {
+        await db.runAsync('INSERT INTO chapter_cards (chapterId,cardId,position) VALUES (?,?,?)', chapterId, cardId, position++);
+      }
+    }
+  });
+}
+
+async function removeCardFromChapterImpl(chapterId: string, cardId: string) {
+  const db = await openDatabase();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM chapter_cards WHERE chapterId=? AND cardId=?', chapterId, cardId);
+    const remaining = await db.getAllAsync<{ cardId: string }>('SELECT cardId FROM chapter_cards WHERE chapterId=? ORDER BY position,cardId', chapterId);
+    for (const [position, row] of remaining.entries()) await db.runAsync('UPDATE chapter_cards SET position=? WHERE chapterId=? AND cardId=?', position, chapterId, row.cardId);
+  });
+}
+
+async function reorderChapterCardsImpl(chapterId: string, orderedCardIds: string[]) {
+  const db = await openDatabase();
+  await db.withTransactionAsync(async () => {
+    const current = await db.getAllAsync<{ cardId: string }>('SELECT cc.cardId FROM chapter_cards cc JOIN thoughts t ON t.id=cc.cardId WHERE cc.chapterId=? AND t.deletedAt IS NULL ORDER BY cc.position,cc.cardId', chapterId);
+    const currentIds = current.map(row => row.cardId);
+    if (new Set(orderedCardIds).size !== orderedCardIds.length || currentIds.length !== orderedCardIds.length || currentIds.some(id => !orderedCardIds.includes(id))) {
+      throw new Error('卡片顺序与当前章节不匹配');
+    }
+    for (const [position, cardId] of orderedCardIds.entries()) await db.runAsync('UPDATE chapter_cards SET position=? WHERE chapterId=? AND cardId=?', position, chapterId, cardId);
+  });
+}
+
+async function getSystemDocumentImpl(systemId: string): Promise<SystemDocument> {
+  const db = await openDatabase();
+  const system = await db.getFirstAsync<ThoughtSystem>('SELECT * FROM systems WHERE id=?', systemId);
+  if (!system) throw new Error('思想体系不存在');
+  const chapters = await db.getAllAsync<Chapter>('SELECT * FROM chapters WHERE systemId=? ORDER BY position,id', systemId);
+  const documentChapters = await Promise.all(chapters.map(async chapter => ({
+    ...chapter,
+    cards: await db.getAllAsync<Card>(`
+      SELECT t.id,t.title,t.content,t.createdAt,t.updatedAt,t.deletedAt
+      FROM chapter_cards cc JOIN thoughts t ON t.id=cc.cardId
+      WHERE cc.chapterId=? AND t.deletedAt IS NULL ORDER BY cc.position,t.id`, chapter.id)
+  })));
+  return { system, chapters: documentChapters };
 }
 
 export type Deck = { id: string; name: string; description: string; coverStyle: string; color: string; createdAt: string; updatedAt: string; deletedAt: string | null; syncStatus: 'pending' | 'synced'; cardCount?: number };
@@ -228,25 +441,27 @@ async function exportCardsDataImpl() {
   return thoughts.map(thought=>({thought,tags:tags.filter(t=>t.thoughtId===thought.id).map(t=>t.tag),decks:memberships.filter(d=>d.thoughtId===thought.id).map(d=>d.name)}));
 }
 
-const tables = ['thoughts', 'decks', 'deck_thoughts', 'relations', 'sources', 'citations', 'revisions', 'thought_tags', 'favorites', 'settings'] as const;
+const tables = ['thoughts', 'decks', 'deck_thoughts', 'relations', 'sources', 'citations', 'revisions', 'thought_tags', 'favorites', 'settings', 'systems', 'chapters', 'chapter_cards', 'card_links'] as const;
 async function exportBackupImpl() {
   const db = await openDatabase();
   const data: Record<string, unknown> = {};
   for (const table of tables) data[table] = await db.getAllAsync(`SELECT * FROM ${table}`);
-  return JSON.stringify({ format: 'noesis-backup', version: 4, exportedAt: new Date().toISOString(), data }, null, 2);
+  return JSON.stringify({ format: 'noesis-backup', version: 5, exportedAt: new Date().toISOString(), data }, null, 2);
 }
 async function restoreBackupImpl(text: string) {
   const backup = JSON.parse(text);
-  if (backup.format !== 'noesis-backup' || ![1,2,3,4].includes(backup.version) || !backup.data) throw new Error('不是有效的 NOESIS 备份');
+  if (backup.format !== 'noesis-backup' || ![1,2,3,4,5].includes(backup.version) || !backup.data) throw new Error('不是有效的 NOESIS 备份');
   if (backup.version === 1) {
     for (const table of ['thought_tags','favorites','settings']) backup.data[table]=[];
     if (Array.isArray(backup.data.decks)) for (const row of backup.data.decks) { row.updatedAt=row.createdAt; row.deletedAt=null; }
   }
   if (backup.version < 3) for (const table of ['thoughts','decks']) if (Array.isArray(backup.data[table])) for (const row of backup.data[table]) row.syncStatus='pending';
   if (backup.version < 4 && Array.isArray(backup.data.relations)) for (const row of backup.data.relations) {row.updatedAt=backup.exportedAt || new Date().toISOString();row.deletedAt=null;row.syncStatus='pending';}
+  if (backup.version < 5) for (const table of ['systems','chapters','chapter_cards','card_links']) backup.data[table]=[];
   if (tables.some(t => !Array.isArray(backup.data[t]))) throw new Error('备份缺少数据表');
   if (backup.data.thoughts.some((row:Thought)=>!row || typeof row.title !== 'string' || !row.title.trim() || !['proposition','concept','source'].includes(row.type) || !['exploring','formed','supported','challenged','revised'].includes(row.status))) throw new Error('备份中包含无效的卡片');
   if (backup.data.relations.some((row:Relation)=>!row || !['supports','contradicts','explains','causes','extends','related'].includes(row.relationType))) throw new Error('备份中包含无效的关系类型');
+  if (backup.data.card_links.some((row:CardLink)=>!row || typeof row.id !== 'string' || typeof row.sourceCardId !== 'string' || typeof row.targetCardId !== 'string' || row.sourceCardId >= row.targetCardId)) throw new Error('备份中包含无效的卡片关联');
   const db = await openDatabase();
   // Validate column names against our schema, and bind every value as data.
   await db.withTransactionAsync(async () => {
@@ -256,6 +471,19 @@ async function restoreBackupImpl(text: string) {
       for (const row of backup.data[table]) {
         if (!row || typeof row !== 'object' || columns.some(c => !(c in row)) || Object.keys(row).some(c => !columns.includes(c))) throw new Error(`${table} 数据格式不正确`);
         await db.runAsync(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`, columns.map(c => row[c]));
+      }
+    }
+    // v1-v4 backups contain only the old directional relation rows. Keep those
+    // rows intact and also expose their active pairs through the undirected v5 table.
+    if (backup.version < 5) {
+      // Old cards often stored their only prose in the summary field. Copy it
+      // into the new body while keeping the original summary column untouched.
+      await db.runAsync("UPDATE thoughts SET content=summary WHERE content='' AND summary<>''");
+      const liveCardIds = new Set((backup.data.thoughts as Thought[]).filter(row => !row.deletedAt).map(row => row.id));
+      for (const relation of backup.data.relations as Relation[]) {
+        if (relation.deletedAt || relation.sourceThoughtId === relation.targetThoughtId || !liveCardIds.has(relation.sourceThoughtId) || !liveCardIds.has(relation.targetThoughtId)) continue;
+        const [sourceCardId, targetCardId] = [relation.sourceThoughtId, relation.targetThoughtId].sort();
+        await db.runAsync('INSERT OR IGNORE INTO card_links (id,sourceCardId,targetCardId) VALUES (?,?,?)', relation.id, sourceCardId, targetCardId);
       }
     }
   });
@@ -276,6 +504,25 @@ export const initializeDemo = serialize(initializeDemoImpl);
 export const listThoughts = serialize(listThoughtsImpl);
 export const saveThought = serialize(saveThoughtImpl);
 export const deleteThought = serialize(deleteThoughtImpl);
+export const listCards = serialize(listCardsImpl);
+export const saveCard = serialize(saveCardImpl);
+export const listCardLinks = serialize(listCardLinksImpl);
+export const addCardLink = serialize(addCardLinkImpl);
+export const deleteCardLink = serialize(deleteCardLinkImpl);
+export const listSystems = serialize(listSystemsImpl);
+export const createSystem = serialize(createSystemImpl);
+export const updateSystem = serialize(updateSystemImpl);
+export const deleteSystem = serialize(deleteSystemImpl);
+export const listChapters = serialize(listChaptersImpl);
+export const createChapter = serialize(createChapterImpl);
+export const updateChapter = serialize(updateChapterImpl);
+export const deleteChapter = serialize(deleteChapterImpl);
+export const reorderChapters = serialize(reorderChaptersImpl);
+export const listChapterCards = serialize(listChapterCardsImpl);
+export const addCardsToChapter = serialize(addCardsToChapterImpl);
+export const removeCardFromChapter = serialize(removeCardFromChapterImpl);
+export const reorderChapterCards = serialize(reorderChapterCardsImpl);
+export const getSystemDocument = serialize(getSystemDocumentImpl);
 export const listSources = serialize(listSourcesImpl);
 export const saveSource = serialize(saveSourceImpl);
 export const listCitations = serialize(listCitationsImpl);

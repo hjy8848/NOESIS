@@ -1,6 +1,7 @@
 import YAML from 'yaml';
 import Papa from 'papaparse';
 import { Thought, ThoughtStatus, ThoughtType } from './types';
+import type { SystemDocument } from './types';
 import type { ImportCard } from './repository';
 
 export type ImportFile = { name: string; text: string };
@@ -33,6 +34,19 @@ export function formatMarkdown(thought: Thought, tags: string[], decks: string[]
   return `---\n${metadata}---\n${thought.content}`;
 }
 
-export function formatCsv(cards: Array<{thought: Thought; tags:string[]; decks:string[]}>) {
+export function formatCsv(cards: {thought: Thought; tags:string[]; decks:string[]}[]) {
   return Papa.unparse({fields:['id','title','summary','content','type','status','tags','decks'],data:cards.map(({thought,tags,decks})=>[thought.id,thought.title,thought.summary,thought.content,thought.type,thought.status,JSON.stringify(tags),JSON.stringify(decks)])});
+}
+
+export function formatSystemMarkdown(document: SystemDocument) {
+  const lines = [`# ${document.system.title}`, ''];
+  if (document.system.description.trim()) lines.push(document.system.description.trim(), '');
+  for (const [chapterIndex, chapter] of document.chapters.entries()) {
+    lines.push(`## ${chapterIndex + 1}. ${chapter.title}`, '');
+    if (!chapter.cards.length) lines.push('（本章暂无卡片。）', '');
+    for (const card of chapter.cards) {
+      lines.push(`### ${card.title}`, '', card.content || '（暂无正文。）', '');
+    }
+  }
+  return `${lines.join('\n').trimEnd()}\n`;
 }

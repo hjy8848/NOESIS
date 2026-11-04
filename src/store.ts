@@ -1,19 +1,27 @@
 import { create } from 'zustand';
-import { Thought } from './types';
+import type { Card, CardLink, Chapter, ThoughtSystem } from './types';
 import * as repo from './repository';
 
 interface LibraryState {
-  thoughts: Thought[];
-  decks: repo.Deck[];
-  relations: repo.Relation[];
-  favorites: string[];
-  sources: repo.Source[];
+  cards: Card[];
+  cardLinks: CardLink[];
+  systems: ThoughtSystem[];
+  chapters: Chapter[];
   refresh: () => Promise<void>;
 }
 
 export const useLibraryStore = create<LibraryState>(set => ({
-  thoughts:[], decks:[], relations:[], favorites:[], sources:[],
+  cards: [],
+  cardLinks: [],
+  systems: [],
+  chapters: [],
   async refresh() {
-    set(await repo.loadLibrary());
+    const [cards, cardLinks, systems, chapters] = await Promise.all([
+      repo.listCards(),
+      repo.listCardLinks(),
+      repo.listSystems(),
+      repo.listChapters(),
+    ]);
+    set({ cards, cardLinks, systems, chapters });
   },
 }));

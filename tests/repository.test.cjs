@@ -48,7 +48,7 @@ test('create, edit, tags, favorites and revision survive backup and restore', as
   assert.equal((await repo.listSources())[0].title,'一本书');
 });
 
-test('existing version 1 database migrates without losing cards or deck memberships', async () => {
+test('existing version 1 database migrates to version 5 without losing cards or deck memberships', async () => {
   const first = repository();
   const id = await first.repo.saveThought(card);
   await first.repo.createDeck('旧牌组','描述');
@@ -59,7 +59,7 @@ test('existing version 1 database migrates without losing cards or deck membersh
   assert.equal((await upgraded.repo.listThoughts())[0].id,id);
   assert.equal((await upgraded.repo.deckMembers(deck.id))[0].thoughtId,id);
   assert.equal((await upgraded.repo.listDecks())[0].updatedAt,deck.createdAt);
-  assert.equal(first.db.prepare('PRAGMA user_version').get().user_version,4);
+  assert.equal(first.db.prepare('PRAGMA user_version').get().user_version,5);
 });
 
 test('failed backup restore and failed batch are atomic', async () => {
@@ -125,7 +125,7 @@ test('version 1 backups restore with new data tables and deck fields', async () 
   for (const row of backup.data.decks) { delete row.updatedAt; delete row.deletedAt; delete row.syncStatus; }
   await repo.restoreBackup(JSON.stringify(backup));
   assert.equal((await repo.listDecks())[0].name,'旧牌组');
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version,4);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version,5);
 });
 
 test('version 2 backup restores with pending sync state', async () => {
@@ -139,7 +139,7 @@ test('version 2 backup restores with pending sync state', async () => {
   assert.equal(restored.syncStatus,'pending');
 });
 
-test('version 3 relation backups migrate to version 4', async () => {
+test('version 3 relation backups restore through v5 and seed undirected links', async () => {
   const {repo}=repository();
   const a=await repo.saveThought(card),b=await repo.saveThought({...card,title:'另一个'});
   await repo.addRelation(a,b,'explains');
@@ -151,6 +151,50 @@ test('version 3 relation backups migrate to version 4', async () => {
   assert.equal(relation.relationType,'explains');
   assert.equal(relation.syncStatus,'pending');
   assert.equal(relation.deletedAt,null);
+  assert.equal((await repo.listCardLinks()).length,1);
+});
+
+test('v4 migration keeps legacy tables, converts summary-only prose, and exposes undirected links', async () => {
+  const first = repository();
+  const a = await first.repo.saveThought({...card, title:'旧卡片甲', summary:'旧摘要正文', content:''});
+  const b = await first.repo.saveThought({...card, title:'旧卡片乙'});
+  await first.repo.addRelation(a, b, 'related');
+  first.db.exec('DROP TABLE card_links; DROP TABLE chapter_cards; DROP TABLE chapters; DROP TABLE systems; PRAGMA user_version=4;');
+
+  const upgraded = repository('', first.db);
+  const migrated = (await upgraded.repo.listCards()).find(item => item.id === a);
+  assert.equal(migrated.content, '旧摘要正文');
+  assert.equal((await upgraded.repo.listCardLinks()).length, 1);
+  assert.equal(first.db.prepare('SELECT COUNT(*) AS count FROM relations').get().count, 1);
+  assert.ok(first.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='thoughts'").get());
+  assert.ok(first.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='revisions'").get());
+  assert.equal(first.db.prepare('PRAGMA user_version').get().user_version, 5);
+});
+
+test('cards, undirected links, chapter membership, order, systems, and v5 backup persist together', async () => {
+  const { repo } = repository();
+  const cardIds = await Promise.all(Array.from({length:5}, (_, index) => repo.saveCard({title:`卡片 ${index + 1}`, content:`正文 ${index + 1}`})));
+  await repo.addCardLink(cardIds[0], cardIds[1]);
+  await repo.addCardLink(cardIds[1], cardIds[0]);
+  assert.equal((await repo.listCardLinks()).length, 1);
+
+  const systemId = await repo.createSystem('主体与欲望', '一套思想体系');
+  const firstChapter = await repo.createChapter(systemId, '主体');
+  const secondChapter = await repo.createChapter(systemId, '欲望');
+  await repo.addCardsToChapter(firstChapter, [cardIds[0], cardIds[1], cardIds[2]]);
+  await repo.addCardsToChapter(secondChapter, [cardIds[3], cardIds[4], cardIds[0]]);
+  await repo.reorderChapterCards(firstChapter, [cardIds[2], cardIds[0], cardIds[1]]);
+  await repo.reorderChapters(systemId, [secondChapter, firstChapter]);
+
+  const backup = await repo.exportBackup();
+  assert.equal(JSON.parse(backup).version, 5);
+  await repo.restoreBackup(backup);
+  const document = await repo.getSystemDocument(systemId);
+  assert.deepEqual(Array.from(document.chapters, chapter => chapter.title), ['欲望', '主体']);
+  assert.deepEqual(Array.from(document.chapters[1].cards, item => item.id), [cardIds[2], cardIds[0], cardIds[1]]);
+  assert.deepEqual(Array.from(document.chapters[0].cards, item => item.id), [cardIds[3], cardIds[4], cardIds[0]]);
+  assert.equal((await repo.listCardLinks())[0].sourceCardId, [cardIds[0], cardIds[1]].sort()[0]);
+  assert.equal((await repo.listCards()).length, 5);
 });
 
 test('batch import creates tags and decks, preserves omitted fields and rolls back ambiguous decks', async () => {

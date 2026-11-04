@@ -118,9 +118,6 @@ export default function NoesisApp() {
         <View style={styles.brandMark}><Text style={styles.brandStar}>✦</Text></View>
         <Text style={styles.brand}>NOESIS</Text>
         <Text style={styles.brandHint}>思想的结构</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel="备份与恢复" onPress={() => setBackupVisible(true)} style={styles.backupButton}>
-          <Text style={styles.backupIcon}>↥</Text><Text style={styles.backupText}>备份</Text>
-        </Pressable>
       </View>
       <View style={styles.content}>
         {booting ? <View style={styles.loading}><Text style={styles.brandStar}>✦</Text><Text style={styles.loadingText}>正在打开你的思想牌库…</Text></View> : tab === 'cards' ? <CardsScreen
@@ -161,6 +158,9 @@ export default function NoesisApp() {
         ] as const).map(([id, label, mark]) => <Pressable key={id} accessibilityRole="tab" accessibilityState={{ selected: tab === id }} onPress={() => setTab(id)} style={styles.tabItem}>
           <Text style={[styles.tabIcon, tab === id && styles.tabIconActive]}>{mark}</Text><Text style={[styles.tabLabel, tab === id && styles.tabLabelActive]}>{label}</Text>
         </Pressable>)}
+        <Pressable accessibilityRole="button" accessibilityLabel="备份与恢复" onPress={() => setBackupVisible(true)} style={styles.backupTabAction}>
+          <Text style={styles.backupIcon}>↥</Text><Text style={styles.backupText}>备份</Text>
+        </Pressable>
       </View>
       <View pointerEvents="none" style={styles.routeSink}><Slot /></View>
     </SafeAreaView>
@@ -191,13 +191,13 @@ const styles = StyleSheet.create({
   brandStar: { color: palette.gold, fontSize: 16 },
   brand: { color: palette.ink, fontSize: 13, fontWeight: '800', letterSpacing: 2.2 },
   brandHint: { color: palette.muted, fontSize: 10, marginLeft: 8, paddingTop: 2 },
-  backupButton: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 9, backgroundColor: '#e9e3d7' },
-  backupIcon: { color: palette.green, fontSize: 15, fontWeight: '700' },
-  backupText: { color: palette.ink, fontSize: 11, fontWeight: '600' },
+  backupTabAction: { width: 58, height: 56, marginLeft: 4, marginRight: 2, borderRadius: 12, backgroundColor: '#e9e3d7', alignItems: 'center', justifyContent: 'center' },
+  backupIcon: { color: palette.green, fontSize: 17, fontWeight: '700', lineHeight: 20 },
+  backupText: { color: palette.ink, fontSize: 10, fontWeight: '600', marginTop: 1 },
   content: { flex: 1 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   loadingText: { color: palette.muted, fontSize: 13, marginTop: 7 },
-  tabBar: { minHeight: 63, flexDirection: 'row', borderTopWidth: 1, borderColor: '#ddd6c8', backgroundColor: '#f7f4ed', paddingBottom: 4 },
+  tabBar: { minHeight: 73, flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderColor: '#ddd6c8', backgroundColor: '#f7f4ed', paddingHorizontal: 8, paddingVertical: 5 },
   tabItem: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 7 },
   tabIcon: { color: '#a49d8f', fontSize: 18, marginBottom: 2 },
   tabIconActive: { color: palette.gold },

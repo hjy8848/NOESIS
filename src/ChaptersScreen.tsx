@@ -39,7 +39,7 @@ export function ChaptersScreen({
   const focusedChapter = chapters.find(chapter => chapter.id === focusChapterId);
   const systemId = focusedChapter?.systemId || (systems.some(system => system.id === systemSelectionId) ? systemSelectionId : systems[0]?.id || null);
   const chapterId = focusedChapter?.id || chapterSelectionId;
-  const chapterCards = chapterCardState.chapterId === chapterId ? chapterCardState.rows : [];
+  const chapterCards = useMemo(() => chapterCardState.chapterId === chapterId ? chapterCardState.rows : [], [chapterCardState, chapterId]);
   const activeSystem = systems.find(system => system.id === systemId);
   const activeChapter = chapters.find(chapter => chapter.id === chapterId);
   const systemChapters = useMemo(() => chapters.filter(chapter => chapter.systemId === systemId).sort((a, b) => a.position - b.position || a.id.localeCompare(b.id)), [chapters, systemId]);
@@ -115,7 +115,7 @@ export function ChaptersScreen({
       <ActionButton label="连续阅读" onPress={() => onReadChapter(activeChapter.id)} tone="primary" />
       <ActionButton label="＋ 添加已有卡片" onPress={() => { setPickedIds([]); setPickerSearch(''); setPickerVisible(true); }} />
     </View>
-    <Text style={styles.orderHint}>长按右侧 ≡ 拖动排序 · 卡片可以出现在多个章节</Text>
+    <Text style={styles.orderHint}>按住左侧 ≡ 拖动排序 · 卡片可同时属于多个章节</Text>
     <DraggableFlatList
       data={chapterCards}
       keyExtractor={item => item.id}
@@ -173,51 +173,51 @@ function CardPicker({ visible, cards, search, pickedIds, onSearch, onToggle, onC
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, paddingHorizontal: 20, paddingTop: 14 },
-  container: { paddingHorizontal: 22, paddingTop: 22, paddingBottom: 30 },
+  flex: { flex: 1, paddingHorizontal: 21, paddingTop: 14 },
+  container: { paddingHorizontal: 22, paddingTop: 21, paddingBottom: 32 },
   topline: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
-  eyebrow: { color: palette.gold, fontSize: 10, letterSpacing: 3, marginBottom: 7 },
-  title: { color: palette.ink, fontSize: 30, fontWeight: '700' },
-  count: { color: palette.gold, fontSize: 13, paddingBottom: 5 },
-  intro: { color: palette.muted, fontSize: 14, lineHeight: 21, marginTop: 7, marginBottom: 20 },
-  systemPicker: { gap: 8, paddingVertical: 5 },
-  systemChip: { maxWidth: 220, borderRadius: 99, borderWidth: 1, borderColor: palette.line, backgroundColor: '#f8f5ed', paddingHorizontal: 15, paddingVertical: 10 },
+  eyebrow: { color: palette.accent, fontSize: 9, letterSpacing: 2.2, marginBottom: 7 },
+  title: { color: palette.ink, fontFamily: 'serif', fontSize: 32, fontWeight: '400' },
+  count: { color: palette.muted, fontFamily: 'serif', fontSize: 14, paddingBottom: 5 },
+  intro: { color: palette.muted, fontSize: 13, lineHeight: 20, marginTop: 7, marginBottom: 18 },
+  systemPicker: { gap: 8, paddingVertical: 6 },
+  systemChip: { maxWidth: 220, borderRadius: 9, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.paper, paddingHorizontal: 14, paddingVertical: 9 },
   systemChipSelected: { borderColor: palette.green, backgroundColor: palette.green },
   systemChipText: { color: palette.ink, fontSize: 13, fontWeight: '600' },
   systemChipTextSelected: { color: '#fffaf1' },
-  chapterListHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 22, marginBottom: 8 },
-  sectionTitle: { color: palette.ink, fontSize: 18, fontWeight: '700' },
-  chapterRow: { flexDirection: 'row', alignItems: 'center', minHeight: 78, paddingHorizontal: 14, paddingVertical: 11, marginVertical: 5, borderRadius: 15, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line },
-  chapterIndex: { color: palette.gold, width: 42, fontSize: 17, fontWeight: '600' },
+  chapterListHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20, marginBottom: 7, paddingBottom: 8, borderBottomWidth: 1, borderColor: palette.line },
+  sectionTitle: { color: palette.ink, fontFamily: 'serif', fontSize: 20, fontWeight: '400' },
+  chapterRow: { flexDirection: 'row', alignItems: 'center', minHeight: 78, paddingHorizontal: 13, paddingVertical: 11, marginVertical: 4, borderRadius: 11, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line },
+  chapterIndex: { color: palette.accent, width: 43, fontFamily: 'serif', fontSize: 21 },
   chapterCopy: { flex: 1 },
-  chapterTitle: { color: palette.ink, fontSize: 16, fontWeight: '600' },
-  chapterSubtitle: { color: palette.muted, fontSize: 12, marginTop: 5 },
+  chapterTitle: { color: palette.ink, fontFamily: 'serif', fontSize: 18, fontWeight: '400' },
+  chapterSubtitle: { color: palette.muted, fontSize: 11, marginTop: 5, letterSpacing: .15 },
   chevron: { color: palette.gold, fontSize: 27, paddingHorizontal: 8 },
-  empty: { alignItems: 'center', backgroundColor: '#ebe5d8', borderRadius: 18, padding: 25, marginTop: 10 },
-  emptyCompact: { padding: 19, backgroundColor: '#ebe5d8', borderRadius: 14, marginTop: 6 },
+  empty: { alignItems: 'center', backgroundColor: palette.card, borderWidth: 1, borderColor: palette.line, borderRadius: 14, padding: 25, marginTop: 10 },
+  emptyCompact: { padding: 19, backgroundColor: palette.card, borderWidth: 1, borderColor: palette.line, borderRadius: 12, marginTop: 6 },
   emptyMark: { color: palette.gold, fontSize: 42, marginBottom: 9 },
-  emptyText: { color: palette.ink, fontSize: 18, fontWeight: '600', marginBottom: 5 },
+  emptyText: { color: palette.ink, fontFamily: 'serif', fontSize: 19, fontWeight: '400', marginBottom: 5 },
   muted: { color: palette.muted, fontSize: 13, lineHeight: 20, textAlign: 'center' },
   emptyButton: { marginTop: 18, width: '100%' },
-  detailHeader: { flexDirection: 'row', alignItems: 'center', minHeight: 58, gap: 4 },
+  detailHeader: { flexDirection: 'row', alignItems: 'center', minHeight: 62, gap: 4, borderBottomWidth: 1, borderColor: palette.line },
   detailHeading: { flex: 1, paddingHorizontal: 4 },
-  kicker: { color: palette.gold, fontSize: 10, letterSpacing: 1.8, marginBottom: 2 },
-  detailTitle: { color: palette.ink, fontSize: 19, fontWeight: '700' },
-  chapterActions: { flexDirection: 'row', gap: 9, marginTop: 13, marginBottom: 8 },
-  orderHint: { color: palette.muted, fontSize: 12, marginVertical: 6 },
+  kicker: { color: palette.accent, fontSize: 9, letterSpacing: 1.7, marginBottom: 3 },
+  detailTitle: { color: palette.ink, fontFamily: 'serif', fontSize: 20, fontWeight: '400' },
+  chapterActions: { flexDirection: 'row', gap: 9, marginTop: 13, marginBottom: 7 },
+  orderHint: { color: palette.muted, fontSize: 11, marginVertical: 7, letterSpacing: .1 },
   memberList: { paddingBottom: 24, flexGrow: 1 },
-  memberRow: { flexDirection: 'row', alignItems: 'center', minHeight: 72, marginVertical: 5, borderRadius: 14, paddingHorizontal: 8, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line },
-  memberActive: { backgroundColor: '#eee4cf', borderColor: palette.gold, shadowColor: palette.shadow, shadowOpacity: .16, shadowRadius: 9, shadowOffset: { width: 0, height: 5 }, elevation: 4 },
+  memberRow: { flexDirection: 'row', alignItems: 'center', minHeight: 72, marginVertical: 4, borderRadius: 10, paddingHorizontal: 7, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line },
+  memberActive: { backgroundColor: '#eee8d9', borderColor: palette.gold, shadowColor: palette.shadow, shadowOpacity: .12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 3 },
   dragHandle: { width: 42, height: 54, justifyContent: 'center', alignItems: 'center' },
-  dragGlyph: { color: palette.gold, fontSize: 25 },
+  dragGlyph: { color: palette.gold, fontSize: 24 },
   memberText: { flex: 1, paddingVertical: 11, paddingRight: 8 },
-  memberTitle: { color: palette.ink, fontSize: 15, fontWeight: '600' },
-  memberPreview: { color: palette.muted, fontSize: 12, marginTop: 4 },
+  memberTitle: { color: palette.ink, fontFamily: 'serif', fontSize: 16, fontWeight: '400' },
+  memberPreview: { color: palette.muted, fontSize: 11, marginTop: 4 },
   removeMember: { width: 38, height: 46, justifyContent: 'center', alignItems: 'center' },
   removeGlyph: { color: palette.muted, fontSize: 24 },
-  modalBackdrop: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: 'rgba(31,36,31,.42)' },
-  modalCard: { borderRadius: 18, backgroundColor: palette.page, padding: 20, borderWidth: 1, borderColor: palette.line },
-  modalTitle: { color: palette.ink, fontSize: 21, fontWeight: '700', marginBottom: 9 },
+  modalBackdrop: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: 'rgba(38,35,29,.4)' },
+  modalCard: { borderRadius: 14, backgroundColor: palette.page, padding: 20, borderWidth: 1, borderColor: palette.line },
+  modalTitle: { color: palette.ink, fontFamily: 'serif', fontSize: 22, fontWeight: '400', marginBottom: 9 },
   modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 9, marginTop: 12 },
   pickerRoot: { flex: 1, paddingTop: 55, paddingHorizontal: 20, backgroundColor: palette.page },
   pickerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

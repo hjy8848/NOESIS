@@ -43,28 +43,32 @@ export function CardsScreen({
 
   return <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
     <View style={styles.topline}>
-      <View><Text style={styles.eyebrow}>YOUR THOUGHTS</Text><Text style={styles.title}>思想卡片</Text></View>
+      <View><Text style={styles.eyebrow}>CARD INDEX　/　思想档案</Text><Text style={styles.title}>思想卡片</Text></View>
       <Text style={styles.total}>{cards.length.toString().padStart(2, '0')} 张</Text>
     </View>
     <Text style={styles.intro}>把想法写成卡片，再慢慢整理成章节与体系。</Text>
-    <TextInput
-      value={search}
-      onChangeText={value => {
-        setSearch(value);
-        const query = value.trim().toLocaleLowerCase();
-        const first = query ? cards.find(card => `${card.title}\n${card.content}`.toLocaleLowerCase().includes(query)) : cards[0];
-        onSelectCard(first?.id || null);
-      }}
-      placeholder="搜索标题或正文"
-      placeholderTextColor="#938d80"
-      returnKeyType="search"
-      accessibilityLabel="搜索思想卡片"
-      style={styles.search}
-    />
+    <View style={styles.searchField}>
+      <Text style={styles.searchMark}>⌕</Text>
+      <TextInput
+        value={search}
+        onChangeText={value => {
+          setSearch(value);
+          const query = value.trim().toLocaleLowerCase();
+          const first = query ? cards.find(card => `${card.title}\n${card.content}`.toLocaleLowerCase().includes(query)) : cards[0];
+          onSelectCard(first?.id || null);
+        }}
+        placeholder="搜索标题或正文"
+        placeholderTextColor="#928d82"
+        returnKeyType="search"
+        accessibilityLabel="搜索思想卡片"
+        style={styles.search}
+      />
+    </View>
     {current ? <>
       <CardView
         key={current.id}
         card={current}
+        cardNumber={index + 1}
         canNext={index < filtered.length - 1}
         canPrevious={index > 0}
         animations
@@ -72,7 +76,7 @@ export function CardsScreen({
         onNext={() => onSelectCard(filtered[index + 1]?.id || current.id)}
         onPrevious={() => onSelectCard(filtered[index - 1]?.id || current.id)}
       />
-      <Text style={styles.counter}>{index + 1} / {filtered.length}　·　点击翻面，左右滑动</Text>
+      <View style={styles.counterRow}><View style={styles.counterRule} /><Text style={styles.counter}>{String(index + 1).padStart(2, '0')}　/　{String(filtered.length).padStart(2, '0')}</Text><View style={styles.counterRule} /></View>
       <View style={styles.actions}>
         <ActionButton label="阅读" onPress={() => onRead(current)} tone="primary" />
         <ActionButton label="编辑" onPress={() => onEdit(current)} />
@@ -97,19 +101,23 @@ export function CardsScreen({
 }
 
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 22, paddingTop: 22, paddingBottom: 24 },
+  container: { paddingHorizontal: 22, paddingTop: 21, paddingBottom: 26 },
   topline: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
-  eyebrow: { color: palette.gold, fontSize: 10, letterSpacing: 3, marginBottom: 7 },
-  title: { color: palette.ink, fontSize: 30, fontWeight: '700', letterSpacing: .5 },
-  total: { color: palette.gold, fontSize: 13, paddingBottom: 5 },
-  intro: { color: palette.muted, fontSize: 14, lineHeight: 21, marginTop: 7, marginBottom: 11 },
-  search: { height: 47, borderRadius: 14, backgroundColor: '#fbf8f0', borderWidth: 1, borderColor: '#ded7c9', paddingHorizontal: 14, color: palette.ink, fontSize: 15 },
-  counter: { color: palette.muted, textAlign: 'center', fontSize: 12, marginBottom: 5 },
-  actions: { flexDirection: 'row', gap: 8, marginTop: 8 },
-  secondaryActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 },
+  eyebrow: { color: palette.accent, fontSize: 9, letterSpacing: 2.2, marginBottom: 7 },
+  title: { color: palette.ink, fontFamily: 'serif', fontSize: 32, fontWeight: '400', letterSpacing: .2 },
+  total: { color: palette.muted, fontFamily: 'serif', fontSize: 14, paddingBottom: 5 },
+  intro: { color: palette.muted, fontSize: 13, lineHeight: 20, marginTop: 7, marginBottom: 13 },
+  searchField: { minHeight: 43, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8f6ef', borderWidth: 1, borderColor: palette.line, borderRadius: 11, paddingLeft: 12 },
+  searchMark: { color: palette.gold, fontSize: 22, lineHeight: 26, paddingBottom: 3 },
+  search: { flex: 1, minHeight: 41, paddingHorizontal: 10, color: palette.ink, fontSize: 14 },
+  counterRow: { flexDirection: 'row', alignItems: 'center', gap: 12, justifyContent: 'center', marginTop: -3, marginBottom: 10 },
+  counterRule: { height: 1, width: 32, backgroundColor: palette.line },
+  counter: { color: palette.muted, textAlign: 'center', fontFamily: 'serif', fontSize: 12, letterSpacing: 1 },
+  actions: { flexDirection: 'row', gap: 8, marginTop: 3 },
+  secondaryActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
   linkRow: { gap: 8, paddingVertical: 3 },
   muted: { color: palette.muted, fontSize: 13, lineHeight: 20 },
-  empty: { alignItems: 'center', justifyContent: 'center', minHeight: 300, backgroundColor: '#ebe5d8', borderRadius: 20, marginVertical: 22, padding: 28 },
-  emptyMark: { color: palette.gold, fontSize: 48, marginBottom: 12 },
-  emptyTitle: { color: palette.ink, fontSize: 19, fontWeight: '600', textAlign: 'center', marginBottom: 7 },
+  empty: { alignItems: 'center', justifyContent: 'center', minHeight: 280, backgroundColor: palette.card, borderWidth: 1, borderColor: palette.line, borderRadius: 16, marginVertical: 22, padding: 28 },
+  emptyMark: { color: palette.accent, fontSize: 38, marginBottom: 12 },
+  emptyTitle: { color: palette.ink, fontFamily: 'serif', fontSize: 20, textAlign: 'center', marginBottom: 7 },
 });

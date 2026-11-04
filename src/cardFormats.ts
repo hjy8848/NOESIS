@@ -5,6 +5,35 @@ import type { SystemDocument } from './types';
 import type { ImportCard } from './repository';
 
 export type ImportFile = { name: string; text: string };
+
+export function parseCardJson(text: string): ImportCard[] {
+  const parsed: unknown = JSON.parse(text);
+  const rows = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object' && 'cards' in parsed && Array.isArray(parsed.cards)
+      ? parsed.cards
+      : null;
+  if (!rows) throw new Error('JSON 顶层需要是卡片数组，或包含 cards 数组');
+  if (!rows.length) throw new Error('JSON 中没有卡片');
+
+  const cards = rows.map((row, index): ImportCard => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error(`第 ${index + 1} 项不是卡片对象`);
+    const value = row as Record<string, unknown>;
+    if (typeof value.title !== 'string' || !value.title.trim()) throw new Error(`第 ${index + 1} 张卡片缺少标题`);
+    if (value.content !== undefined && typeof value.content !== 'string') throw new Error(`第 ${index + 1} 张卡片的 content 必须是文本`);
+    if (value.id !== undefined && (typeof value.id !== 'string' || !value.id.trim())) throw new Error(`第 ${index + 1} 张卡片的 id 必须是非空文本`);
+    return {
+      id: typeof value.id === 'string' ? value.id.trim() : undefined,
+      title: value.title.trim(),
+      content: typeof value.content === 'string' ? value.content : undefined,
+    };
+  });
+
+  const ids = cards.flatMap(card => card.id ? [card.id] : []);
+  if (new Set(ids).size !== ids.length) throw new Error('JSON 中存在重复 id');
+  return cards;
+}
+
 function parseList(value: string | undefined): string[] | undefined {
   if (value === undefined) return undefined;
   if (value.trim().startsWith('[')) {
